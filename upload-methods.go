@@ -75,6 +75,13 @@ func UploadImageFromLocalhost(fileName string, description string, filePath stri
 	styles := filePlugin.ImageStyles
 
 	_, originalExtension, _ := files_helpers.GetFileExtensionAndMimeType(filePath)
+	if originalExtension == "" {
+		// Fallback to filename extension if detection fails
+		fileNameSplits := strings.Split(fileName, ".")
+		if len(fileNameSplits) > 1 {
+			originalExtension = fileNameSplits[len(fileNameSplits)-1]
+		}
+	}
 
 	// Check if original format should be ignored
 	shouldIgnoreFormat := false
@@ -153,16 +160,34 @@ func UploadImageFromLocalhost(fileName string, description string, filePath stri
 		}
 	}
 
-	originalDest, _ := storage.GetUploadPathFromFile("original", filePlugin.ImageFormat, record)
-
-	err = processor.Resize(filePath, filePath, record.Name, resizeOpts)
-	if err != nil {
-		return err
+	// Determine the format to use for storage path
+	storageFormat := ""
+	if shouldIgnoreFormat && originalExtension != "" {
+		storageFormat = originalExtension
+	} else if filePlugin.ImageFormat != "" {
+		storageFormat = filePlugin.ImageFormat
 	}
 
-	err = storage.UploadFile(record, filePath, originalDest)
-	if err != nil {
-		return errors.Wrap(err, "UploadImageFromLocalhost Error on upload file")
+	originalDest, _ := storage.GetUploadPathFromFile("original", storageFormat, record)
+
+	// Skip resize processing for ignored formats to preserve their properties (e.g., GIF animation, SVG vectors)
+	if shouldIgnoreFormat && originalExtension != "" {
+		// For ignored formats, just copy the file without processing
+		err = storage.UploadFile(record, filePath, originalDest)
+		if err != nil {
+			return errors.Wrap(err, "UploadImageFromLocalhost Error on upload file")
+		}
+	} else {
+		// Process the image with resize/format conversion
+		err = processor.Resize(filePath, filePath, record.Name, resizeOpts)
+		if err != nil {
+			return err
+		}
+
+		err = storage.UploadFile(record, filePath, originalDest)
+		if err != nil {
+			return errors.Wrap(err, "UploadImageFromLocalhost Error on upload file")
+		}
 	}
 
 	record.ResetURLs(app)
